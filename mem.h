@@ -12,7 +12,7 @@ typedef struct {
   u8 buffer[MEM_SIZE];
 } MEM;
 extern MEM mem;
-MEM create_mem();
+void create_mem();
 void write_mem_w(u16 value, u16 address);
 u16 read_mem_w(u16 address);
 void write_mem_b(u8 value, u16 address);

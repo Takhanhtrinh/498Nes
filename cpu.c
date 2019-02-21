@@ -1,1562 +1,1664 @@
+/*
+ * cpu.c
+ * implementation for cpu
+ * by: trinh ta
+ */
+
 #include "cpu.h"
-CPU create_cpu() {
-  CPU c;
-  c.a = c.x = c.y = 0;
-  c.pc = 0;
-  c.p = 0x24;
-  c.stack = 0xFD;
-  c.cycles = 0x00000000;
-  return c;
+// create cpu for global variable cpu
+void create_cpu()
+{
+  cpu.a = cpu.x = cpu.y = 0;
+  cpu.pc = 0;
+  // defalt flag 
+  cpu.p = 0x24;
+  cpu.stack = 0xFD;
+  cpu.cycles = 0x00000000;
 }
-void setNFlag(u8 value) {
-  if ((value & 0x80) == 0x80) 
-    setFlag(cpu.p | NEGATIVE_FLAG);
-  else 
-    setFlag(cpu.p & ~(NEGATIVE_FLAG));
+void zero_page()
+{
+  opcode_address = read_mem_b(cpu.pc + 1);
+#ifdef DEBUG
+  printf(" @%02x = %02x\n", opcode_address, mem.buffer[opcode_address]);
+#endif
 }
-void setVFlag(u8 value1, u8 value2, u8 result) {
-  u8 flag = (~(value1 ^ value2)) & (value2 ^ result) & 0x80;
-  if (flag == 0x80)
-    setFlag(cpu.p | OVERFLOW_FLAG);
-  else
-    setFlag(cpu.p & ~(OVERFLOW_FLAG));
+void zero_page_x()
+{
+  // from 0x00 -> 0xff
+  opcode_address = (u16)(read_mem_b(cpu.pc + 1) + cpu.x) & 0xFF;
+#ifdef DEBUG
+  printf("x = %02x @%02x = %02x\n", cpu.x, opcode_address,
+         mem.buffer[opcode_address]);
+#endif
 }
-void setZFlag(u8 value) {
-  if (value == 0)
-    setFlag(cpu.p | ZERO_FLAG);
-  else
-    setFlag(cpu.p & ~(ZERO_FLAG));
+void zero_page_y()
+{
+  // from 0x00 -> 0xff
+  opcode_address = (read_mem_b(cpu.pc + 1)) + cpu.y & 0xFF;
+#ifdef DEBUG
+  printf(" @%02x = %02x\n", opcode_address, mem.buffer[opcode_address]);
+#endif
 }
-void setFlag(u8 value) {
-  cpu.p = 0;
-  cpu.p |= value & 0xff;
-  cpu.p |= 0x20;  // this flag always on
-}
-
-u8 getNflag() {
-  u8 v = cpu.p;
-  v = v & NEGATIVE_FLAG;
-  return v;
-}
-u8 getVflag() {
-  u8 v = cpu.p;
-  v = v & OVERFLOW_FLAG;
-  return v;
-}
-u8 getZflag() {
-  u8 v = cpu.p;
-  v = v & ZERO_FLAG;
-  return v;
-}
-u8 getCflag() {
-  u8 v = cpu.p;
-  v = v & CARRY_FLAG;
-return v;
-}
-u8 getIflag() {
-  u8 v = cpu.p;
-  v = v & INTERRUPT_FLAG;
-  return v;
-}
-u8 getDflag() {
-  u8 v = cpu.p;
-  v = v & DECIMAL_FLAG;
-  return v;
-}
-u8 getBflag() {
-  u8 v = cpu.p;
-  v = v & BREAK_FLAG;
-  return v;
-}
-
-void immediate() {
-  address_mode = IMMEDIATE;
-  opcode_value = mem.buffer[cpu.pc + 1];
-}
-void zero_page() {
-  address_mode = ZERO_PAGE;
-  u8 addrr = mem.buffer[cpu.pc + 1];
-  opcode_address = addrr;
-  opcode_value = read_mem_b(addrr);
-}
-void zero_page_x() {
-  address_mode = ZERO_PAGE_X;
-  u8 addrr = mem.buffer[cpu.pc + 1];
-  opcode_address = (u8)(addrr + cpu.x);
-  opcode_value = read_mem_b(opcode_address);
-  //opcode_value = mem.buffer[opcode_address];
-}
-void zero_page_y() {
-  address_mode = ZERO_PAGE_Y;
-  u8 addrr = mem.buffer[cpu.pc + 1];
-  opcode_address = (u8)(addrr + cpu.y);
-  opcode_value = read_mem_b(opcode_address);
-  //opcode_value = mem.buffer[opcode_address];
-  //printf("%04x = $%02x\n", opcode_address, opcode_value);
-}
-void relative() {
-  address_mode = RELATIVE;
-  //byte value = (byte)(mem.buffer[cpu.pc + 1]);
-  //opcode_value = read_mem_b(cpu.pc + 1);
-  opcode_value = mem.buffer[cpu.pc + 1];
-}
-void absolute() {
-  address_mode = ABSOLUTE;
+void absolute()
+{
   opcode_address = read_mem_w(cpu.pc + 1);
-  opcode_value = read_mem_b(opcode_address);
-
+#ifdef DEBUG
+  printf(" @%04x = %02x\n", opcode_address, mem.buffer[opcode_address]);
+#endif
 }
-u8 absolute_x() {
-  address_mode = ABSOLUTE_X;
+// push value to the stack, and decrease the address, because stack is from
+// 100-1ff
+void push(u8 val) { write_mem_b(val, (u16)cpu.stack-- | STACK_OFFSET); }
+// pop the stack 
+u8 pull() { return read_mem_b((u16)++cpu.stack | STACK_OFFSET); }
+
+u8 absolute_x()
+{
+  // read address and add cpu.x
+  u16 address = read_mem_w(cpu.pc + 1);
+  opcode_address = address + cpu.x;
+  // get page across
+  u8 pageAcross = isPageAcross(address, opcode_address);
+  // return 1 if 2 addresses are in difrerent page
+#ifdef DEBUG
+  printf(" @%04x = %02x\n", opcode_address, mem.buffer[opcode_address]);
+#endif
+  return pageAcross;
+}
+
+u8 absolute_y()
+{
+  // read address and add to cpu.x
+  u16 address = read_mem_w(cpu.pc + 1);
+  opcode_address = address + cpu.y;
+  // get page across
+#ifdef DEBUG
+  printf(" @%04x = %02x\n", opcode_address, mem.buffer[opcode_address]);
+#endif
+  return isPageAcross(address, opcode_address);
+}
+void indirect()
+{
+  // address from instruction
   u16 val = read_mem_w(cpu.pc + 1);
-  u8 rt;
-  rt = ((((val & 0x00FF) + (u16)cpu.x) & 0x0F00) != 0) ? 1 : 0;
-  opcode_address = val + cpu.x;
-  opcode_value = read_mem_b(opcode_address);
-  return rt;
-}
-u8 absolute_y() {
-  address_mode = ABSOLUTE_Y;
-  u16 val = read_mem_w(cpu.pc + 1);
-  u8 rt;
-  rt = ((((val & 0x00FF) + (u16)cpu.y) & 0x0F00) != 0) ? 1 : 0;
-  opcode_address = val + cpu.y;
-  opcode_value = read_mem_b(opcode_address);
-  return rt;
-}
-void indirect() {
-  address_mode = INDIRECT;
-  opcode_address = read_mem_w(cpu.pc + 1);
-  opcode_value = read_mem_b(opcode_address);
-}
-
-void index_indirect() {
-  address_mode = IN_INDIRECT;
-  u8 val = mem.buffer[cpu.pc + 1];
-  opcode_address = (u16)(val + cpu.x);
-  opcode_address = read_mem_w(opcode_address);
-  opcode_value = read_mem_b(opcode_value);
-//  if ((opcode_address & 0x00FF) != 0x00FF) {
-//    opcode_address = read_mem_w(opcode_address & 0x00FF);
-//    opcode_value = read_mem_w(opcode_address);
-//  } else {
-//    u16 lowByte = read_mem_b(opcode_address & 0x00FF);
-//    printf("low byte: %04x\n", lowByte);
-//    u16 highByte = read_mem_b(opcode_address & 0x0000) << 8;
-//    printf("high byte: %04x\n", highByte);
-//    opcode_address = highByte | lowByte;
-//    opcode_value = read_mem_w(opcode_address);
-//  }
-  //printf(" = %04x @ %04x = %02x\n", opcode_address, opcode_address,
-         //opcode_value);
-}
-u8 indirect_indexed() {
-  address_mode = IN_INDEXED;
-  u8 val = mem.buffer[cpu.pc + 1];
-  u8 rt = 0;
-  if ((cpu.y & 0x0F) == 0x0f) rt = 1;
-  if ((val & 0xFF) == 0xFF) {
-    rt = 1;
-    u16 lowByte = read_mem_b((u16)val & 0x00FF);
-    u16 heightByte = read_mem_b((u16)val & 0x0000) << 8;
-    opcode_address = (heightByte | lowByte) + cpu.y;
-    opcode_value = read_mem_w(opcode_address);
-    return rt;
-  } else {
-    opcode_address = read_mem_w(val & 0x00FF);
-    if ((opcode_address & 0x000F) == 0x000F) rt = 1;
-    opcode_address += cpu.y;
-    opcode_value = read_mem_w(opcode_address);
-    return rt;
-  }
-}
-void implied() {
-  address_mode = IMPLIED;
-}
-
-void interrupt_reset() {
-  const u16 RESET_VECTOR = 0xFFFC;
-  u16 pc = read_mem_w(RESET_VECTOR);
-  cpu.pc = pc;
-  cpu.cycles += 7;
-}
-void interrupt_irq() {
-  // padding byte, ignored by the cpu
-  // u8 padding = mem.buffer[cpu.pc + 1];
-  const u16 IRQ_VECTOR = 0xFFFE;
-  u16 newpc = cpu.pc + 2;
-  write_mem_b((newpc >> 8) & 0xFF, cpu.stack-- + STACK_OFFSET);
-  write_mem_b((newpc & 0xFF), cpu.stack-- + STACK_OFFSET);
-  write_mem_b(cpu.p, cpu.stack-- + STACK_OFFSET);
-  cpu.pc = read_mem_w(IRQ_VECTOR);
-  setFlag(cpu.p | INTERRUPT_FLAG);
-}
-
-// 1    PC     R  fetch opcode (and discard it - $00 (BRK) is forced into the
-// opcode register instead) 2    PC     R  read next instruction byte (actually
-// the same as above, since PC increment is suppressed. Also discarded.) 3
-// $0100,S  W  push PCH on stack, decrement S 4  $0100,S  W  push PCL on stack,
-// decrement S
-//*** At this point, the signal status determines which interrupt vector is used
-//***
-// 5  $0100,S  W  push P on stack (with B flag *clear*), decrement S
-// 6   A       R  fetch PCL (A = FFFE for IRQ, A = FFFA for NMI), set I flag
-// 7   A       R  fetch PCH (A = FFFF for IRQ, A = FFFB for NMI)
-void interrupt_nmi() {
-  const u16 NMI_VECTOR = 0xFFFA;
-  u16 newpc = cpu.pc + 1;
-  write_mem_b((newpc >> 8) & 0xFF, cpu.stack-- + STACK_OFFSET);
-  write_mem_b((newpc & 0xFF), cpu.stack-- + STACK_OFFSET);
-  // turn on b flag, http://wiki.nesdev.com/w/index.php/Status_flags
-  write_mem_b(cpu.p | 0x20, cpu.stack-- + STACK_OFFSET);
-  cpu.pc = read_mem_w(NMI_VECTOR);
-  cpu.p |= INTERRUPT_FLAG;
-
-}
-void LDA() {
-  cpu.a = opcode_value;
-  setNFlag(cpu.a);
-  setZFlag(cpu.a);
-}
-void LDX() {
-  cpu.x = opcode_value;
-  setNFlag(cpu.x);
-  setZFlag(cpu.x);
-}
-void LDY() {
-  cpu.y = opcode_value;
-  setNFlag(cpu.y);
-  setZFlag(cpu.y);
-}
-void NOP() {
-  return;
-}
-void STA() {
-  // fix the bug when the cpu reads the $2007 to get the value, but STA uses for
-  // transfer data to mem
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address -= getAddressIncrement();
-  write_mem_b(cpu.a, opcode_address);
-  //mem.buffer[opcode_address] = cpu.a;
-}
-void STX() {
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address-= getAddressIncrement();
-  write_mem_b(cpu.x, opcode_address);
-}
-void STY() {
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address -= getAddressIncrement();
-  write_mem_b(cpu.y, opcode_address);
-}
-void TAX() {
-  setNFlag(cpu.a);
-  setZFlag(cpu.a);
-  cpu.x = cpu.a;
-}
-
-void TAY() {
-  setNFlag(cpu.a);
-  setZFlag(cpu.a);
-  cpu.y = cpu.a;
-}
-void TSX() {
-  setNFlag(cpu.stack);
-  setZFlag(cpu.stack);
-  cpu.x = cpu.stack;
-}
-void TXA() {
-  setNFlag(cpu.x);
-  setZFlag(cpu.x);
-  cpu.a = cpu.x;
-}
-void TXS() {
-  cpu.stack = cpu.x;
-}
-
-void TYA() {
-  setNFlag(cpu.y);
-  setZFlag(cpu.y);
-  cpu.a = cpu.y;
-}
-
-void AND() {
-  opcode_value &= cpu.a;
-  setNFlag(opcode_value);
-  setZFlag(opcode_value);
-  cpu.a = opcode_value;
-}
-void ASL() {
-  const u8 MASK = 0x80;
-  if (address_mode == ACCUMULATOR) {
-    if ((cpu.a & MASK) == MASK)
-      setFlag(cpu.p | CARRY_FLAG);
-    else
-      setFlag(cpu.p & ~(CARRY_FLAG));
-    cpu.a <<= 1;
-    setZFlag(cpu.a);
-    setNFlag(cpu.a);
-  } else {
-    u8 val = (u8)opcode_value;
-    if ((val & MASK) == MASK)
-      setFlag(cpu.p | CARRY_FLAG);
-    else
-      setFlag(cpu.p & ~(CARRY_FLAG));
-    val <<= 1;
-    setZFlag(val);
-    setNFlag(val);
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address-= getAddressIncrement();
-    write_mem_b(val, opcode_address);
-  }
-}
-// BIT - Bit Test
-// A & M, N = M7, V = M6
-//
-// This instructions is used to test if one or more bits are set in a target
-// memory location. The mask pattern in A is ANDed with the value in memory to
-// set or clear the zero flag, but the result is not kept. Bits 7 and 6 of the
-// value from memory are copied into the N and V flags.
-//
-// Processor Status after use:
-//
-// C	Carry Flag	Not affected
-// Z	Zero Flag	Set if the result if the AND is zero
-// I	Interrupt Disable	Not affected
-// D	Decimal Mode Flag	Not affected
-// B	Break Command	Not affected
-// V	Overflow Flag	Set to bit 6 of the memory value
-// N	Negative Flag	Set to bit 7 of the memory value
-
-void BIT() {
-  u8 val = cpu.a & opcode_value;
-  setZFlag(val);
-  setNFlag(opcode_value);
-  u8 vMask = 0x40;
-  if ((opcode_value & vMask) == vMask)
-    setFlag(cpu.p | OVERFLOW_FLAG);  // turn the v flag on
+  // BUG From 6502
+  // read address bug if the lower 8 bits are 0xFF. it will fetch the lower byte
+  // from xxff and higher byte at ff00
+  if ((val & 0x00FF) == 0x00FF)
+    opcode_address =
+        (u16)read_mem_b(val) | (u16)(read_mem_b(val & 0xFF00) << 8);
   else
-    setFlag(cpu.p & ~(OVERFLOW_FLAG));  // disable v flag
-}
-void EOR() {
-  opcode_value ^= cpu.a;
-  setNFlag(opcode_value);
-  setZFlag(opcode_value);
-  cpu.a = opcode_value;
-}
-void LSR() {
-  const u8 MASK = 0x01;
-  if (address_mode == ACCUMULATOR) {
-    if ((cpu.a & MASK) == MASK)
-      setFlag(cpu.p | CARRY_FLAG);
-    else
-      setFlag(cpu.p & ~(CARRY_FLAG));
-    cpu.a >>= 1;
-    setZFlag(cpu.a);
-    setNFlag(cpu.a);
-  } else {
-    u8 val = (u8)opcode_value;
-    if ((val & MASK) == MASK)
-      setFlag(cpu.p | CARRY_FLAG);
-    else
-      setFlag(cpu.p & ~(CARRY_FLAG));
-    val >>= 1;
-    setZFlag(val);
-    setNFlag(val);
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address -= getAddressIncrement();
-    write_mem_b(val, opcode_address);
-
-  }
-}
-void ORA() {
-  opcode_value |= cpu.a;
-  setNFlag(opcode_value);
-  setZFlag(opcode_value);
-  cpu.a = opcode_value;
+    opcode_address = read_mem_w(val);
+#ifdef DEBUG
+  printf(" @%04x = %02x\n", opcode_address, mem.buffer[opcode_address]);
+#endif
 }
 
-void ROL() {
-  u8 cflag = cpu.p & CARRY_FLAG;
-  ASL();
-  u8 newVal;
-  if (address_mode == ACCUMULATOR) {
-    cpu.a = cpu.a | (cflag != 0);
-    newVal = cpu.a;
-  } else {
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address -= getAddressIncrement();
-    write_mem_b(mem.buffer[opcode_address] | (cflag != 0), opcode_address);
-    newVal = mem.buffer[opcode_address];
-  }
-  setZFlag(newVal);
-  setNFlag(newVal);
-}
-
-void ROR() {
-  u8 carry = cpu.p & 0x01;
-  if (address_mode == ACCUMULATOR) {
-    cpu.p = cpu.p | (cpu.a & 0x01);
-    cpu.a >>= 1;
-    if (carry == 0x01) cpu.a |= 0x80;
-    setZFlag(cpu.a);
-    setNFlag(cpu.a);
-  } else {
-    cpu.p = cpu.p | (opcode_value & 0x01);
-    opcode_value >>= 1;
-    if (carry == 0x01) opcode_value |= 0x80;
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address -= getAddressIncrement();
-    write_mem_b(opcode_value, opcode_address);
-    setZFlag(opcode_value);
-    setNFlag(opcode_value);
-  }
-}
-
-void ADC() {
-  short val = (short)opcode_value;
-  u16 sum = val + (short)cpu.a + ((cpu.p & CARRY_FLAG) != 0);
-  // set carry flag
-  if ((sum & 0x00FF) != 0x00FF && (sum & 0x0100) == 0x0100)
-    setFlag(cpu.p | CARRY_FLAG);
+void indirect_x()
+{
+  // address from instruction
+  u8 val = read_mem_b(cpu.pc + 1) + cpu.x;
+  // new read address
+  // read address bug if the lower 8 bits are 0xFF. it will fetch the lower byte
+  // from xxff and higher byte at ff00
+  if ((val & 0x00FF) == 0x00FF)
+    opcode_address =
+        (u16)read_mem_b(val) | (u16)(read_mem_b(val & 0xFF00) << 8);
   else
-    setFlag(cpu.p & ~(CARRY_FLAG));
-  setZFlag((u8)(sum & 0x0ff));
-  setNFlag((u8)(sum & 0xff));
-  setVFlag(cpu.a, opcode_value, (u8)(sum & 0x0FF));
-  cpu.a = (u8)(sum & 0x0ff);
+    opcode_address = read_mem_w(val);
+#ifdef DEBUG
+  printf(" @%04x = %02x\n", opcode_address, mem.buffer[opcode_address]);
+#endif
+}
+u8 indirect_y()
+{
+  // address from instruction
+  u8 val = read_mem_b(cpu.pc + 1);
+  // new read address
+  // read address bug if the lower 8 bits are 0xFF. it will fetch the lower byte
+  // from xxff and higher byte at ff00
+  if ((val & 0x00FF) == 0x00FF)
+    opcode_address =
+        (u16)read_mem_b(val) | (u16)(read_mem_b(val & 0xFF00) << 8);
+  else
+    opcode_address = read_mem_w(val);
+  opcode_address += cpu.y;
+#ifdef DEBUG
+  printf(" @%04x = %02x\n", opcode_address, mem.buffer[opcode_address]);
+#endif
+  return isPageAcross(opcode_address - cpu.y, opcode_address);
 }
 
-void DEC() {
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address -= getAddressIncrement();
-  opcode_value--;
-  write_mem_b(opcode_value, opcode_address);
-  setZFlag(opcode_value);
-  setNFlag(opcode_value);
-}
-void DEX() {
-  cpu.x--;
-  setZFlag(cpu.x);
-  setNFlag(cpu.x);
-}
-void DEY() {
-  cpu.y--;
-  setZFlag(cpu.y);
-  setNFlag(cpu.y);
-}
-void INC() {
-  if (opcode_address == PPU_R_DATA_ADDRESS) ppu.ppu_address-= getAddressIncrement();
-  opcode_value++;
-  write_mem_b(opcode_value, opcode_address);
-  setZFlag(opcode_value);
-  setNFlag(opcode_value);
-}
-void INX() {
-  cpu.x++;
-  setZFlag(cpu.x);
-  setNFlag(cpu.x);
-}
-void INY() {
-  cpu.y++;
-  setZFlag(cpu.y);
-  setNFlag(cpu.y);
-}
-void SBC() {
-  opcode_value = ~opcode_value;
-  ADC();
-}
-void CLC() {
-  setFlag(cpu.p & ~(CARRY_FLAG));
-}
-void CLD() {
-  setFlag(cpu.p & ~(DECIMAL_FLAG));
-}
-void CLI() {
-  setFlag(cpu.p & ~(INTERRUPT_FLAG));
-}
-void CLV() {
-  setFlag(cpu.p & ~(OVERFLOW_FLAG));
-}
-void SEC() {
-  setFlag(cpu.p | CARRY_FLAG);
-}
-void SED() {
-  setFlag(cpu.p | DECIMAL_FLAG);
-}
-void SEI() {
-  setFlag(cpu.p | INTERRUPT_FLAG);
+void relative()
+{
+  u8 val = read_mem_b(cpu.pc + 1);
+  opcode_address = cpu.pc + 2 + (char)val;
 }
 
-// MODE           SYNTAX       HEX LEN TIM
-// Immediate     CMP #$44      $C9  2   2
-// Zero Page     CMP $44       $C5  2   3
-// Zero Page,X   CMP $44,X     $D5  2   4
-// Absolute      CMP $4400     $CD  3   4
-// Absolute,X    CMP $4400,X   $DD  3   4+
-// Absolute,Y    CMP $4400,Y   $D9  3   4+
-// Indirect,X    CMP ($44,X)   $C1  2   6
-// Indirect,Y    CMP ($44),Y   $D1  2   5+
-void CMP() {
-  if (cpu.a == opcode_value) {
-    setFlag(cpu.p | CARRY_FLAG);
-    setFlag(cpu.p | ZERO_FLAG);
-  } else if (cpu.a < opcode_value) {
-    setFlag(cpu.p & ~(CARRY_FLAG));
-    setFlag(cpu.p & ~(ZERO_FLAG));
-  } else {
-    setFlag(cpu.p | CARRY_FLAG);
-    setFlag(cpu.p & ~(ZERO_FLAG));
-  }
-  setNFlag(cpu.a + ~(opcode_value) + 1);
-}
-// MODE           SYNTAX       HEX LEN TIM
-// Immediate     CPX #$44      $E0  2   2
-// Zero Page     CPX $44       $E4  2   3
-// Absolute      CPX $4400     $EC  3   4
-
-void CPX() {
-  if (cpu.x == opcode_value) {
-    setFlag(cpu.p | CARRY_FLAG);
-    setFlag(cpu.p | ZERO_FLAG);
-  } else if (cpu.x < opcode_value) {
-    setFlag(cpu.p & ~(CARRY_FLAG));
-    setFlag(cpu.p & ~(ZERO_FLAG));
-  } else {
-    setFlag(cpu.p | CARRY_FLAG);
-    setFlag(cpu.p & ~(ZERO_FLAG));
-  }
-  setNFlag(cpu.x + ~(opcode_value) + 1);
-}
-// MODE           SYNTAX       HEX LEN TIM
-// Immediate     CPY #$44      $C0  2   2
-// Zero Page     CPY $44       $C4  2   3
-// Absolute      CPY $4400     $CC  3   4
-void CPY() {
-  if (cpu.y == opcode_value) {
-    setFlag(cpu.p | CARRY_FLAG);
-    setFlag(cpu.p | ZERO_FLAG);
-  } else if (cpu.y < opcode_value) {
-    setFlag(cpu.p & ~(CARRY_FLAG));
-    setFlag(cpu.p & ~(ZERO_FLAG));
-  } else {
-    setFlag(cpu.p | CARRY_FLAG);
-    setFlag(cpu.p & ~(ZERO_FLAG));
-  }
-  setNFlag(cpu.y + ~(opcode_value) + 1);
-}
-void PHA() {
-  write_mem_b(cpu.a, (u8)cpu.stack-- + STACK_OFFSET);
-}
-void PHP() {
-  write_mem_b(cpu.p | 0x30, cpu.stack-- + STACK_OFFSET);
-}
-void PLA() {
-  cpu.a = read_mem_b((u8)++cpu.stack + STACK_OFFSET);
-  setZFlag(cpu.a);
-  setNFlag(cpu.a);
-}
-void PLP() {
-  cpu.p = (read_mem_b((u8)++cpu.stack + STACK_OFFSET) & 0xef) | 0x20;
-
-}
-// Affects Flags: none
-//
-// MODE           SYNTAX       HEX LEN TIM
-// Absolute      JMP $5597     $4C  3   3
-// Indirect      JMP ($5597)   $6C  3   5
-void JMP() {
-  if (address_mode == ABSOLUTE)
-    cpu.pc = opcode_address;
-  else {
-    if ((opcode_address & 0x00FF) == 0x00FF) {
-      cpu.pc = ((u16)(read_mem_b(opcode_address & 0xFF00)) << 8) |
-               read_mem_b(opcode_address);
-    } else
-      cpu.pc = read_mem_w(opcode_address);
-  }
-}
-void JSR() {
-  // 3 byte
-  u16 t = cpu.pc + 3;
-  // minus 1
-  t -= 1;
-  write_mem_b((t >> 8) & 0xFF, cpu.stack-- + STACK_OFFSET);
-  write_mem_b(t & 0xFF, cpu.stack-- + STACK_OFFSET);
-  cpu.pc = opcode_address;
-}
-void RTI() {
-  cpu.p = (read_mem_b((u8)++cpu.stack + STACK_OFFSET) & 0xef) | 0x20;
-  u16 lowByte = read_mem_b(++cpu.stack + STACK_OFFSET);
-  u16 heightByte = read_mem_b(++cpu.stack + STACK_OFFSET);
-  cpu.pc = (heightByte << 8) | lowByte;
-}
-void RTS() {
-  u16 lowByte = read_mem_b(++cpu.stack + STACK_OFFSET);
-  u16 heightByte = read_mem_b(++cpu.stack + STACK_OFFSET);
-  cpu.pc = (heightByte << 8) | lowByte;
-  cpu.pc += 1;
-}
-// MNEMONIC                       HEX
-// BPL (Branch on PLus)           $10
-// BMI (Branch on MInus)          $30
-// BVC (Branch on oVerflow Clear) $50
-// BVS (Branch on oVerflow Set)   $70
-// BCC (Branch on Carry Clear)    $90
-// BCS (Branch on Carry Set)      $B0
-// BNE (Branch on Not Equal)      $D0
-// BEQ (Branch on EQual)          $F0
-byte BCC() {
-  u8 flag = getCflag();
-  if (flag != CARRY_FLAG) {
-    byte val = (byte)opcode_value;
-    cpu.pc += val + 2;
-    return 1;
-  }
-  return -1;
-}
-byte BCS() {
-  u8 flag = getCflag();
-  if (flag == CARRY_FLAG) {
-    byte val = (byte)opcode_value;
-    cpu.pc += val + 2;
-    return 1;
-  }
-  return -1;
-}
-byte BEQ() {
-  if (getZflag() == ZERO_FLAG) {
-    byte val = (byte)opcode_value;
-    cpu.pc += val + 2;
-    return 1;
-  }
-  return -1;
-}
-byte BMI() {
-  if (getNflag() == NEGATIVE_FLAG) {
-    byte val = (byte)opcode_value;
-    cpu.pc += val + 2;
-    return 1;
-  }
-  return -1;
-}
-byte BNE() {
-  if (getZflag() != ZERO_FLAG) {
-    byte val = (byte)opcode_value;
-    cpu.pc += val + 2;
-    return 1;
-  }
-  return -1;
-}
-byte BPL() {
-  if (getNflag() != NEGATIVE_FLAG) {
-    byte val = (byte)opcode_value;
-    cpu.pc += val + 2;
-    return 1;
-  }
-  return -1;
-}
-byte BVC() {
-  if (getVflag() != OVERFLOW_FLAG) {
-    byte val = (byte)opcode_value;
-    cpu.pc += val + 2;
-    return 1;
-  }
-  return -1;
-}
-byte BVS() {
-  if (getVflag() == OVERFLOW_FLAG) {
-    byte val = (byte)opcode_value;
-    cpu.pc += val + 2;
-    return 1;
-  }
-  return -1;
-}
-byte emulate() {
-  opcode_address = 0;
-  opcode_value = 0;
-  lastCycles = cpu.cycles;
+int emulate()
+{
+  // when the ppu is in vblank and the nmi interrupt is on in the 0x2000
+  // register
   if (cpu.nmi_interrupt != 0) {
     cpu.nmi_interrupt = 0;
     interrupt_nmi();
     cpu.cycles += 7;
-    return 1;
+    return 7;
   }
+  // next opcode
   u8 opcode = mem.buffer[cpu.pc];
-  //printf("%04x%5s", cpu.pc, "");
-  //if (opcodes_size[(u8)opcode] == 1) {
-  //  printf("%s", opcode_name[(u8)opcode]);
-  //} else if (opcodes_size[(u8)opcode] == 2) {
-  //  printf(opcode_name[(u8)opcode], mem.buffer[cpu.pc + 1]);
-  //} else if (opcodes_size[(u8)opcode] == 3) {
-  //  printf(opcode_name[(u8)opcode], mem.buffer[cpu.pc + 2],
-  //         mem.buffer[cpu.pc + 1]);
-  //} else
-  //  printf("cant find it \n");
-  //printf("%-*s", 25, "");
-  //// showRegisters();
-  //printf("cycles: %u ppuCycles: %u scanlines: %u", cpu.cycles, ppu.cycles, ppu.scanlines);
-  //printf("\n");
-  u8 r;
+  // use for branching function like jsr, jump, rts, rti, because at the end of
+  // the emulate function, we will add opcode size (number of bytes for each
+  // opcode). If the opcode is a branch, then we don't need to add the number of
+  // bytes for next opcode, because we set a new program counter
+  u8 isBranch = 0;
+  // disassembler
+#ifdef DEBUG
+  printf("%04x%5s", cpu.pc, "");
+  if (opcodes_size[(u8)opcode] == 1) {
+    printf("%s", opcode_name[(u8)opcode]);
+  }
+  else if (opcodes_size[(u8)opcode] == 2) {
+    printf(opcode_name[(u8)opcode], mem.buffer[cpu.pc + 1]);
+  }
+  else if (opcodes_size[(u8)opcode] == 3) {
+    printf(opcode_name[(u8)opcode], mem.buffer[cpu.pc + 2],
+           mem.buffer[cpu.pc + 1]);
+  }
+  else
+    printf("cant find it \n");
+  printf("%-*s", 25, "");
+  // showRegisters();
+  printf("cycles: %u ppuCycles: %u scanlines: %u", cpu.cycles, ppu.cycles,
+         ppu.scanlines);
+  printf("\n");
+#endif
+  // number of cycles for each instruction for ppu emulate
+  u8 numberOfCycles = 0;
   switch (opcode) {
-      // LDA
-    case 0xA1:
-      index_indirect();
-      LDA();
-      cpu.cycles += 6;
-      break;
-    case 0xA5:
-      zero_page();
-      LDA();
-      cpu.cycles += 3;
-      break;
-    case 0xA9:
-      immediate();
-      LDA();
-      cpu.cycles += 2;
-      break;
-    case 0xAD:
-      absolute();
-      LDA();
-      cpu.cycles += 4;
-      break;
-    case 0xB1: {
-      r = indirect_indexed();
-      LDA();
-      cpu.cycles += 5;
-      cpu.cycles += r;
-    } break;
-    case 0xB5:
-      zero_page_x();
-      LDA();
-      cpu.cycles += 4;
-      break;
-    case 0xB9:
-      r = absolute_y();
-      LDA();
-      cpu.cycles += 4;
-      cpu.cycles += r;
-
-      break;
-    case 0xBD:
-      r = absolute_x();
-      LDA();
-      cpu.cycles += 4;
-      cpu.cycles += r;
-      break;
-    // LDX
-    case 0xA2:
-      immediate();
-      LDX();
-      cpu.cycles += 2;
-      break;
-    case 0xA6:
-      zero_page();
-      LDX();
-      cpu.cycles += 3;
-      break;
-    case 0xB6:
-      zero_page_y();
-      LDX();
-      cpu.cycles += 4;
-      break;
-    case 0xAE:
-      absolute();
-      LDX();
-      cpu.cycles += 4;
-      break;
-    case 0xBE:
-      r = absolute_y();
-      LDX();
-      cpu.cycles += 4;
-      cpu.cycles += r;
-      break;
-      // LDY
-    case 0xA0:
-      immediate();
-      LDY();
-      cpu.cycles += 2;
-      break;
-    case 0xA4:
-      zero_page();
-      LDY();
-      cpu.cycles += 3;
-      break;
-    case 0xB4:
-      zero_page_x();
-      LDY();
-      cpu.cycles += 4;
-      break;
-    case 0xAC:
-      absolute();
-      LDY();
-      cpu.cycles += 4;
-      break;
-    case 0xBC:
-      r = absolute_x();
-      LDY();
-      cpu.cycles += 4;
-      cpu.cycles += r;
-      break;
-    // STA
-    case 0x85:
-      zero_page();
-      STA();
-      cpu.cycles += 3;
-      break;
-    case 0x95:
-      zero_page_x();
-      STA();
-      cpu.cycles += 4;
-      break;
-    case 0x8D:
-      absolute();
-      STA();
-      cpu.cycles += 4;
-      break;
-    case 0x9D:
-      absolute_x();
-      STA();
-      cpu.cycles += 5;
-      break;
-    case 0x99:
-      absolute_y();
-      STA();
-      cpu.cycles += 5;
-      break;
-    case 0x81:
-      index_indirect();
-      STA();
-      cpu.cycles += 6;
-      break;
-    case 0x91:
-      indirect_indexed();
-      STA();
-      cpu.cycles += 6;
-      break;
-    // STX
-    case 0x86:
-      zero_page();
-      STX();
-      cpu.cycles += 3;
-      break;
-    case 0x96:
-      zero_page_y();
-      STX();
-      cpu.cycles += 4;
-      break;
-    case 0x8E:
-      absolute();
-      STX();
-      cpu.cycles += 4;
-      break;
-    // STY
-    case 0x84:
-      zero_page();
-      STY();
-      cpu.cycles += 3;
-      break;
-    case 0x94:
-      zero_page_x();
-      STY();
-      cpu.cycles += 4;
-      break;
-    case 0x8C:
-      absolute();
-      STY();
-      cpu.cycles += 4;
-      break;
-    // TAX
-    case 0xAA:
-      implied();
-      TAX();
-      cpu.cycles += 2;
-      break;
-    // TAY
-    case 0xA8:
-      implied();
-      TAY();
-      cpu.cycles += 2;
-      break;
-    // TSX
-    case 0xBA:
-      implied();
-      TSX();
-      cpu.cycles += 2;
-      break;
-    // TXA
-    case 0x8A:
-      implied();
-      TXA();
-      cpu.cycles += 2;
-      break;
-      // TXS
-    case 0x9A:
-      implied();
-      TXS();
-      cpu.cycles += 2;
-      break;
-      // TYA
-    case 0x98:
-      implied();
-      TYA();
-      cpu.cycles += 2;
-      break;
-      // ADC
+    // ADC
     case 0x69:
+      address_mode = IMMEDIATE; // will move to immediate()
       immediate();
+      opcode_value = read_mem_b(opcode_address);
       ADC();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
     case 0x65:
+      address_mode = ZERO_PAGE; // will move to zeropage
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       ADC();
-      cpu.cycles += 3;
+      numberOfCycles += 3;
       break;
     case 0x75:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
       ADC();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
     case 0x6D:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       ADC();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
     case 0x7D:
-      r = absolute_x();
+      address_mode = ABSOLUTE_X;
+      // add 1 if the page is a cross
+      numberOfCycles += absolute_x();
+      opcode_value = read_mem_b(opcode_address);
       ADC();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+      numberOfCycles += 4;
       break;
     case 0x79:
-      r = absolute_y();
+      address_mode = ABSOLUTE_Y;
+      // add 1 if the page is across;
+      numberOfCycles += absolute_y();
+      opcode_value = read_mem_b(opcode_address);
       ADC();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+      numberOfCycles += 4;
       break;
     case 0x61:
-      index_indirect();
+      address_mode = INDIRECT_X;
+      indirect_x();
+      opcode_value = read_mem_b(opcode_address);
       ADC();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x71:
-      r = indirect_indexed();
+      address_mode = INDIRECT_Y;
+      numberOfCycles += indirect_y();
+      opcode_value = read_mem_b(opcode_address);
       ADC();
-      cpu.cycles += 5;
-      cpu.cycles += r;
+      numberOfCycles += 5;
       break;
-      // DEC
-    case 0xC6:
-      zero_page();
-      DEC();
-      cpu.cycles += 5;
-      break;
-    case 0xD6:
-      zero_page_x();
-      DEC();
-      cpu.cycles += 6;
-      break;
-    case 0xCE:
-      absolute();
-      DEC();
-      cpu.cycles += 6;
-      break;
-    case 0xDE:
-      absolute_x();
-      DEC();
-      cpu.cycles += 7;
-      break;
-      // DEX
-    case 0xCA:
-      implied();
-      DEX();
-      cpu.cycles += 2;
-      break;
-    // DEY
-    case 0x88:
-      implied();
-      DEY();
-      cpu.cycles += 2;
-      break;
-      // INC - Increment M by One
-      // INX - Increment X by One
-      // INY - Increment Y by One
-      // SBC - Subtract M from A with Borrow
-      // INC
-    case 0xE6:
-      zero_page();
-      INC();
-      cpu.cycles += 5;
-      break;
-    case 0xF6:
-      zero_page_x();
-      INC();
-      cpu.cycles += 6;
-      break;
-    case 0xEE:
-      absolute();
-      INC();
-      cpu.cycles += 6;
-      break;
-    case 0xFE:
-      absolute_x();
-      INC();
-      cpu.cycles += 7;
-      break;
-      // INX
-    case 0xE8:
-      implied();
-      INX();
-      cpu.cycles += 2;
-      break;
-      // INY
-    case 0xC8:
-      implied();
-      INY();
-      cpu.cycles += 2;
-      break;
-    // SBC
-    case 0xE9:
-      immediate();
-      SBC();
-      cpu.cycles += 2;
-      break;
-    case 0xE5:
-      zero_page();
-      SBC();
-      cpu.cycles += 3;
-      break;
-    case 0xF5:
-      zero_page_x();
-      SBC();
-      cpu.cycles += 4;
-      break;
-    case 0xED:
-      absolute();
-      SBC();
-      cpu.cycles += 4;
-      break;
-    case 0xFD:
-      r = absolute_x();
-      SBC();
-      cpu.cycles += 4;
-      cpu.cycles += r;
-      break;
-    case 0xF9:
-      r = absolute_y();
-      SBC();
-      cpu.cycles += 4;
-      cpu.cycles += r;
-      break;
-    case 0xE1:
-      index_indirect();
-      SBC();
-      cpu.cycles += 6;
-      break;
-    case 0xF1:
-      r = indirect_indexed();
-      SBC();
-      cpu.cycles += 5;
-      cpu.cycles += r;
-      break;
-      // and
+    // and
     case 0x29:
+      address_mode = IMMEDIATE;
       immediate();
+      opcode_value = read_mem_b(opcode_address);
       AND();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
     case 0x25:
+      address_mode = ZERO_PAGE;
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       AND();
-      cpu.cycles += 3;
+      numberOfCycles += 3;
       break;
     case 0x35:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
       AND();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
     case 0x2D:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       AND();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
     case 0x3D:
-      r = absolute_x();
+      address_mode = ABSOLUTE_X;
+      numberOfCycles += absolute_x();
+      opcode_value = read_mem_b(opcode_address);
       AND();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+      numberOfCycles += 4;
       break;
     case 0x39:
-      r = absolute_y();
+      address_mode = ABSOLUTE_Y;
+      numberOfCycles += absolute_y();
+      opcode_value = read_mem_b(opcode_address);
       AND();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+      numberOfCycles += 4;
       break;
     case 0x21:
-      index_indirect();
+      address_mode = INDIRECT_X;
+      indirect_x();
+      opcode_value = read_mem_b(opcode_address);
       AND();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x31:
-      r = indirect_indexed();
+      address_mode = INDIRECT_Y;
+      numberOfCycles += indirect_y();
+      opcode_value = read_mem_b(opcode_address);
       AND();
-      cpu.cycles += 5;
-      cpu.cycles += r;
+      numberOfCycles += 5;
       break;
-      // ASL
     case 0x0A:
       address_mode = ACCUMULATOR;
       ASL();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
     case 0x06:
+      address_mode = ZERO_PAGE;
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       ASL();
-      cpu.cycles += 5;
+      numberOfCycles += 5;
       break;
     case 0x16:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
       ASL();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x0E:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       ASL();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x1E:
+      address_mode = ABSOLUTE_X;
       absolute_x();
+      opcode_value = read_mem_b(opcode_address);
       ASL();
-      cpu.cycles += 7;
+      numberOfCycles += 7;
       break;
-    // BIT
+    case 0x90:
+      address_mode = RELATIVE;
+      relative();
+      numberOfCycles += BCC();
+      if (numberOfCycles != 0) isBranch = 1;
+      numberOfCycles += 2;
+      break;
+    case 0xB0:
+      address_mode = RELATIVE;
+      relative();
+      numberOfCycles += BCS();
+      if (numberOfCycles != 0) isBranch = 1;
+      numberOfCycles += 2;
+      break;
+    case 0xF0:
+      address_mode = RELATIVE;
+      relative();
+      numberOfCycles += BEQ();
+      if (numberOfCycles != 0) isBranch = 1;
+      numberOfCycles += 2;
+      break;
     case 0x24:
+      address_mode = ZERO_PAGE;
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       BIT();
-      cpu.cycles += 3;
+      numberOfCycles += 3;
       break;
     case 0x2C:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       BIT();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
-    // EOR
-    case 0x49:
+    case 0x30:
+      address_mode = RELATIVE;
+      relative();
+      numberOfCycles += BMI();
+      if (numberOfCycles != 0) isBranch = 1;
+      numberOfCycles += 2;
+      break;
+    case 0xD0:
+      address_mode = RELATIVE;
+      relative();
+      numberOfCycles += BNE();
+      if (numberOfCycles != 0) isBranch = 1;
+      numberOfCycles += 2;
+      break;
+    case 0x10:
+      address_mode = RELATIVE;
+      relative();
+      numberOfCycles += BPL();
+      if (numberOfCycles != 0) isBranch = 1;
+      numberOfCycles += 2;
+      break;
+    case 0x00:
+      address_mode = IMPLIED;
+      BRK();
+      isBranch = 1;
+      numberOfCycles += 7;
+      break;
+    case 0x50:
+      address_mode = RELATIVE;
+      relative();
+      numberOfCycles += BVC();
+      if (numberOfCycles != 0) isBranch = 1;
+      numberOfCycles += 2;
+      break;
+    case 0x70:
+      address_mode = RELATIVE;
+      relative();
+      numberOfCycles += BVS();
+      if (numberOfCycles != 0) isBranch = 1;
+      numberOfCycles += 2;
+      break;
+    case 0x18:
+      address_mode = IMPLIED;
+      CLC();
+      numberOfCycles += 2;
+      break;
+    case 0xD8:
+      address_mode = IMPLIED;
+      CLD();
+      numberOfCycles += 2;
+      break;
+    case 0x58:
+      address_mode = IMPLIED;
+      CLI();
+      numberOfCycles += 2;
+      break;
+    case 0xB8:
+      address_mode = IMPLIED;
+      CLV();
+      numberOfCycles += 2;
+      break;
+    case 0xC9:
+      address_mode = IMMEDIATE;
       immediate();
+      opcode_value = read_mem_b(opcode_address);
+      CMP();
+      numberOfCycles += 2;
+      break;
+    case 0xC5:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      CMP();
+      numberOfCycles += 3;
+      break;
+    case 0xD5:
+      address_mode = ZERO_PAGE_X;
+      zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
+      CMP();
+      numberOfCycles += 4;
+      break;
+    case 0xCD:
+      address_mode = ABSOLUTE;
+      absolute();
+      opcode_value = read_mem_b(opcode_address);
+      CMP();
+      numberOfCycles += 4;
+      break;
+    case 0xDD:
+      address_mode = ABSOLUTE_X;
+      numberOfCycles += absolute_x();
+      opcode_value = read_mem_b(opcode_address);
+      CMP();
+      numberOfCycles += 4;
+      break;
+    case 0xD9:
+      address_mode = ABSOLUTE_Y;
+      numberOfCycles += absolute_y();
+      opcode_value = read_mem_b(opcode_address);
+      CMP();
+      numberOfCycles += 4;
+      break;
+    case 0xC1:
+      address_mode = INDIRECT_X;
+      indirect_x();
+      opcode_value = read_mem_b(opcode_address);
+      CMP();
+      numberOfCycles += 6;
+      break;
+    case 0xD1:
+      address_mode = INDIRECT_Y;
+      numberOfCycles += indirect_y();
+      opcode_value = read_mem_b(opcode_address);
+      CMP();
+      numberOfCycles += 5;
+      break;
+    case 0xE0:
+      address_mode = IMMEDIATE;
+      immediate();
+      opcode_value = read_mem_b(opcode_address);
+      CPX();
+      numberOfCycles += 2;
+      break;
+    case 0xE4:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      CPX();
+      numberOfCycles += 3;
+      break;
+    case 0xEC:
+      address_mode = ABSOLUTE;
+      absolute();
+      opcode_value = read_mem_b(opcode_address);
+      CPX();
+      numberOfCycles += 4;
+      break;
+    case 0xC0:
+      address_mode = IMMEDIATE;
+      immediate();
+      opcode_value = read_mem_b(opcode_address);
+      CPY();
+      numberOfCycles += 2;
+      break;
+    case 0xC4:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      CPY();
+      numberOfCycles += 3;
+      break;
+    case 0xCC:
+      address_mode = ABSOLUTE;
+      absolute();
+      opcode_value = read_mem_b(opcode_address);
+      CPY();
+      numberOfCycles += 4;
+      break;
+    case 0xC6:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      DEC();
+      numberOfCycles += 5;
+      break;
+    case 0xD6:
+      address_mode = ZERO_PAGE_X;
+      zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
+      DEC();
+      numberOfCycles += 6;
+      break;
+    case 0xCE:
+      address_mode = ABSOLUTE;
+      absolute();
+      opcode_value = read_mem_b(opcode_address);
+      DEC();
+      numberOfCycles += 6;
+      break;
+    case 0xDE:
+      address_mode = ABSOLUTE_X;
+      absolute_x();
+      opcode_value = read_mem_b(opcode_address);
+      DEC();
+      numberOfCycles += 7;
+      break;
+    case 0xCA:
+      address_mode = IMPLIED;
+      DEX();
+      numberOfCycles += 2;
+      break;
+    case 0x88:
+      address_mode = IMPLIED;
+      DEY();
+      numberOfCycles += 2;
+      break;
+    case 0x49:
+      address_mode = IMMEDIATE;
+      immediate();
+      opcode_value = read_mem_b(opcode_address);
       EOR();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
     case 0x45:
+      address_mode = ZERO_PAGE;
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       EOR();
-      cpu.cycles += 3;
+      numberOfCycles += 3;
       break;
     case 0x55:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
-      typedef uint64_t u64;
+      opcode_value = read_mem_b(opcode_address);
       EOR();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
     case 0x4D:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       EOR();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
     case 0x5D:
-      r = absolute_x();
+      address_mode = ABSOLUTE_X;
+      numberOfCycles += absolute_x();
+      opcode_value = read_mem_b(opcode_address);
       EOR();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+      numberOfCycles += 4;
       break;
     case 0x59:
-      r = absolute_y();
+      address_mode = ABSOLUTE_Y;
+      numberOfCycles += absolute_y();
+      opcode_value = read_mem_b(opcode_address);
       EOR();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+      numberOfCycles += 4;
       break;
     case 0x41:
-      index_indirect();
+      address_mode = INDIRECT_X;
+      indirect_x();
+      opcode_value = read_mem_b(opcode_address);
       EOR();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x51:
-      r = indirect_indexed();
+      address_mode = INDIRECT_Y;
+      numberOfCycles += indirect_y();
+      opcode_value = read_mem_b(opcode_address);
       EOR();
-      cpu.cycles += 5;
-      cpu.cycles += r;
+      numberOfCycles += 5;
       break;
-      // LSR
+    case 0xE6:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      INC();
+      numberOfCycles += 5;
+      break;
+    case 0xF6:
+      address_mode = ZERO_PAGE_X;
+      zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
+      INC();
+      numberOfCycles += 6;
+      break;
+    case 0xEE:
+      address_mode = ABSOLUTE;
+      absolute();
+      opcode_value = read_mem_b(opcode_address);
+      INC();
+      numberOfCycles += 6;
+      break;
+    case 0xFE:
+      address_mode = ABSOLUTE_X;
+      absolute_x();
+      opcode_value = read_mem_b(opcode_address);
+      INC();
+      numberOfCycles += 7;
+      break;
+    case 0xE8:
+      address_mode = IMPLIED;
+      INX();
+      numberOfCycles += 2;
+      break;
+    case 0xC8:
+      address_mode = IMPLIED;
+      INY();
+      numberOfCycles += 2;
+      break;
+    case 0x4C:
+      address_mode = ABSOLUTE;
+      absolute();
+      JMP();
+      isBranch = 1;
+      numberOfCycles += 3;
+      break;
+    case 0x6C:
+      address_mode = INDIRECT;
+      indirect();
+      JMP();
+      isBranch = 1;
+      numberOfCycles += 5;
+      break;
+    case 0x20:
+      address_mode = ABSOLUTE;
+      absolute();
+      JSR();
+      isBranch = 1;
+      numberOfCycles += 6;
+      break;
+    case 0xA9:
+      address_mode = IMMEDIATE;
+      immediate();
+      opcode_value = read_mem_b(opcode_address);
+      LDA();
+      numberOfCycles += 2;
+      break;
+    case 0xA5:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      LDA();
+      numberOfCycles += 3;
+      break;
+    case 0xB5:
+      address_mode = ZERO_PAGE_X;
+      zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
+      LDA();
+      numberOfCycles += 4;
+      break;
+    case 0xAD:
+      address_mode = ABSOLUTE;
+      absolute();
+      opcode_value = read_mem_b(opcode_address);
+      LDA();
+      numberOfCycles += 4;
+      break;
+    case 0xBD:
+      address_mode = ABSOLUTE_X;
+      numberOfCycles += absolute_x();
+      opcode_value = read_mem_b(opcode_address);
+      LDA();
+      numberOfCycles += 4;
+      break;
+    case 0xB9:
+      address_mode = ABSOLUTE_Y;
+      numberOfCycles += absolute_y();
+      opcode_value = read_mem_b(opcode_address);
+      LDA();
+      numberOfCycles += 4;
+      break;
+    case 0xA1:
+      address_mode = INDIRECT_X;
+      indirect_x();
+      opcode_value = read_mem_b(opcode_address);
+      LDA();
+      numberOfCycles += 6;
+      break;
+    case 0xB1:
+      address_mode = INDIRECT_Y;
+      numberOfCycles += indirect_y();
+      opcode_value = read_mem_b(opcode_address);
+      LDA();
+      numberOfCycles += 5;
+      break;
+    case 0xA2:
+      address_mode = IMMEDIATE;
+      immediate();
+      opcode_value = read_mem_b(opcode_address);
+      LDX();
+      numberOfCycles += 2;
+      break;
+    case 0xA6:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      LDX();
+      numberOfCycles += 3;
+      break;
+    case 0xB6:
+      address_mode = ZERO_PAGE_Y;
+      zero_page_y();
+      opcode_value = read_mem_b(opcode_address);
+      LDX();
+      numberOfCycles += 4;
+      break;
+    case 0xAE:
+      address_mode = ABSOLUTE;
+      absolute();
+      opcode_value = read_mem_b(opcode_address);
+      LDX();
+      numberOfCycles += 4;
+      break;
+    case 0xBE:
+      address_mode = ABSOLUTE_X;
+      numberOfCycles += absolute_y();
+      opcode_value = read_mem_b(opcode_address);
+      LDX();
+      numberOfCycles += 4;
+      break;
+    case 0xA0:
+      address_mode = IMMEDIATE;
+      immediate();
+      opcode_value = read_mem_b(opcode_address);
+      LDY();
+      numberOfCycles += 2;
+      break;
+    case 0xA4:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      LDY();
+      numberOfCycles += 3;
+      break;
+    case 0xB4:
+      address_mode = ZERO_PAGE_X;
+      zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
+      LDY();
+      numberOfCycles += 4;
+      break;
+    case 0xAC:
+      address_mode = ABSOLUTE;
+      absolute();
+      opcode_value = read_mem_b(opcode_address);
+      LDY();
+      numberOfCycles += 4;
+      break;
+    case 0xBC:
+      address_mode = ABSOLUTE_X;
+      numberOfCycles += absolute_x();
+      opcode_value = read_mem_b(opcode_address);
+      LDY();
+      numberOfCycles += 4;
+      break;
     case 0x4A:
       address_mode = ACCUMULATOR;
       LSR();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
     case 0x46:
+      address_mode = ZERO_PAGE;
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       LSR();
-      cpu.cycles += 5;
+      numberOfCycles += 5;
       break;
     case 0x56:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
       LSR();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x4E:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       LSR();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x5E:
+      address_mode = ABSOLUTE_X;
       absolute_x();
+      opcode_value = read_mem_b(opcode_address);
       LSR();
-      cpu.cycles += 7;
+      numberOfCycles += 7;
       break;
-    // ORA
+      // NOP
+    case 0xEA:
+      address_mode = IMPLIED;
+      numberOfCycles += 2;
+      break;
     case 0x09:
+      address_mode = IMMEDIATE;
       immediate();
+      opcode_value = read_mem_b(opcode_address);
       ORA();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
     case 0x05:
+      address_mode = ZERO_PAGE;
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       ORA();
-      cpu.cycles += 3;
+      numberOfCycles += 3;
       break;
     case 0x15:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
       ORA();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
     case 0x0D:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       ORA();
-      cpu.cycles += 4;
+      numberOfCycles += 4;
       break;
     case 0x1D:
-      r = absolute_x();
+      address_mode = ABSOLUTE_X;
+      numberOfCycles += absolute_x();
+      opcode_value = read_mem_b(opcode_address);
       ORA();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+      numberOfCycles += 4;
       break;
     case 0x19:
-      r = absolute_y();
+      address_mode = ABSOLUTE_Y;
+      numberOfCycles += absolute_y();
+      opcode_value = read_mem_b(opcode_address);
       ORA();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+      numberOfCycles += 4;
       break;
     case 0x01:
-      index_indirect();
+      address_mode = INDIRECT_X;
+      indirect_x();
+      opcode_value = read_mem_b(opcode_address);
       ORA();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x11:
-      r = indirect_indexed();
+      address_mode = INDIRECT_Y;
+      indirect_y();
+      opcode_value = read_mem_b(opcode_address);
       ORA();
-      cpu.cycles += 5;
-      cpu.cycles += r;
+      numberOfCycles += 5;
       break;
-      // ROL
+    case 0x48:
+      address_mode = IMPLIED;
+      PHA();
+      numberOfCycles += 3;
+      break;
+    case 0x08:
+      address_mode = IMPLIED;
+      PHP();
+      numberOfCycles += 3;
+      break;
+    case 0x68:
+      address_mode = IMPLIED;
+      PLA();
+      numberOfCycles += 4;
+      break;
+    case 0x28:
+      address_mode = IMPLIED;
+      PLP();
+      numberOfCycles += 4;
+      break;
     case 0x2A:
       address_mode = ACCUMULATOR;
       ROL();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
     case 0x26:
+      address_mode = ZERO_PAGE;
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       ROL();
-      cpu.cycles += 5;
+      numberOfCycles += 5;
       break;
     case 0x36:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
       ROL();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x2E:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       ROL();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x3E:
+      address_mode = ABSOLUTE_X;
       absolute_x();
+      opcode_value = read_mem_b(opcode_address);
       ROL();
-      cpu.cycles += 7;
+      numberOfCycles += 7;
       break;
-      // ROR
     case 0x6A:
       address_mode = ACCUMULATOR;
       ROR();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
     case 0x66:
+      address_mode = ZERO_PAGE;
       zero_page();
+      opcode_value = read_mem_b(opcode_address);
       ROR();
-      cpu.cycles += 5;
+      numberOfCycles += 5;
       break;
     case 0x76:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
       ROR();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x6E:
+      address_mode = ABSOLUTE;
       absolute();
+      opcode_value = read_mem_b(opcode_address);
       ROR();
-      cpu.cycles += 6;
+      numberOfCycles += 6;
       break;
     case 0x7E:
+      address_mode = ABSOLUTE_X;
       absolute_x();
+      opcode_value = read_mem_b(opcode_address);
       ROR();
-      cpu.cycles += 7;
+      numberOfCycles += 7;
       break;
-      // bcc
-    case 0x90:
-      relative();
-      if (BCC() == 1) {
-        cpu.cycles += 3;
-        return 1;
-      }
-      cpu.cycles += 2;
-      break;
-    case 0xB0:
-      relative();
-      if (BCS() == 1) {
-        cpu.cycles += 3;
-        return 1;
-      }
-      cpu.cycles += 2;
-      break;
-    case 0xF0:
-      relative();
-      if (BEQ() == 1) {
-        cpu.cycles += 3;
-        return 1;
-      }
-      cpu.cycles += 2;
-      break;
-    case 0x30:
-      relative();
-      if (BMI() == 1) {
-        cpu.cycles += 3;
-        return 1;
-      }
-      cpu.cycles += 2;
-      break;
-    case 0xD0:
-      relative();
-      if (BNE() == 1) {
-        cpu.cycles += 3;
-        return 1;
-      }
-      cpu.cycles += 2;
-      break;
-    case 0x10:
-      relative();
-      if (BPL() == 1) {
-        cpu.cycles += 3;
-        return 1;
-      }
-      cpu.cycles += 2;
-      break;
-    case 0x50:
-      relative();
-      if (BVC() == 1) {
-        cpu.cycles += 3;
-        return 1;
-      }
-      cpu.cycles += 2;
-      break;
-    case 0x70:
-      relative();
-      if (BVS() == 1) {
-        cpu.cycles += 3;
-        return 1;
-      }
-      cpu.cycles += 2;
-      break;
-    // JMP
-    case 0x4C:
-      absolute();
-      JMP();
-      cpu.cycles += 3;
-      return 1;
-    case 0x6C:
-      indirect();
-      JMP();
-      cpu.cycles += 5;
-      return 1;
-      // JSR
-    case 0x20:
-      absolute();
-      JSR();
-      cpu.cycles += 6;
-      return 1;
-      // RTI
     case 0x40:
-      implied();
+      address_mode = IMPLIED;
       RTI();
-      cpu.cycles += 6;
-      return 1;
-      // RTS
+      isBranch = 1;
+      numberOfCycles += 6;
+      break;
     case 0x60:
-      implied();
+      address_mode = IMPLIED;
       RTS();
-      cpu.cycles += 6;
-      return 1;
-      // CLC
-    case 0x18:
-      implied();
-      CLC();
-      cpu.cycles += 2;
+      isBranch = 1;
+      numberOfCycles += 6;
       break;
-    case 0xD8:
-      implied();
-      CLD();
-      cpu.cycles += 2;
-      break;
-      // CLI
-    case 0x58:
-      implied();
-      CLI();
-      cpu.cycles += 2;
-      break;
-      // CLV
-    case 0xB8:
-      implied();
-      CLV();
-      cpu.cycles += 2;
-      break;
-      // CMP
-    case 0xC9:
+    case 0xE9:
+      address_mode = IMMEDIATE;
       immediate();
-      CMP();
-      cpu.cycles += 2;
+      opcode_value = read_mem_b(opcode_address);
+      SBC();
+      numberOfCycles += 2;
       break;
-    case 0xC5:
+    case 0xE5:
+      address_mode = ZERO_PAGE;
       zero_page();
-      CMP();
-      cpu.cycles += 3;
+      opcode_value = read_mem_b(opcode_address);
+      SBC();
+      numberOfCycles += 3;
       break;
-    case 0xD5:
+    case 0xF5:
+      address_mode = ZERO_PAGE_X;
       zero_page_x();
-      CMP();
-      cpu.cycles += 4;
+      opcode_value = read_mem_b(opcode_address);
+      SBC();
+      numberOfCycles += 4;
       break;
-    case 0xCD:
+    case 0xED:
+      address_mode = ABSOLUTE;
       absolute();
-      CMP();
-      cpu.cycles += 4;
+      opcode_value = read_mem_b(opcode_address);
+      SBC();
+      numberOfCycles += 4;
       break;
-    case 0xDD:
-      r = absolute_x();
-      CMP();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+    case 0xFD:
+      address_mode = ABSOLUTE_X;
+      numberOfCycles += absolute_x();
+      opcode_value = read_mem_b(opcode_address);
+      SBC();
+      numberOfCycles += 4;
       break;
-    case 0xD9:
-      r = absolute_y();
-      CMP();
-      cpu.cycles += 4;
-      cpu.cycles += r;
+    case 0xF9:
+      address_mode = ABSOLUTE_Y;
+      numberOfCycles += absolute_y();
+      opcode_value = read_mem_b(opcode_address);
+      SBC();
+      numberOfCycles += 4;
       break;
-    case 0xC1:
-      index_indirect();
-      CMP();
-      cpu.cycles += 6;
+    case 0xE1:
+      address_mode = INDIRECT_X;
+      indirect_x();
+      opcode_value = read_mem_b(opcode_address);
+      SBC();
+      numberOfCycles += 6;
       break;
-    case 0xD1:
-      r = indirect_indexed();
-      CMP();
-      cpu.cycles += 5;
-      cpu.cycles += r;
+    case 0xF1:
+      address_mode = INDIRECT_Y;
+      numberOfCycles += indirect_y();
+      opcode_value = read_mem_b(opcode_address);
+      SBC();
+      numberOfCycles += 5;
       break;
-      // CPX
-    case 0xE0:
-      immediate();
-      CPX();
-      cpu.cycles += 2;
-      break;
-    case 0xE4:
-      zero_page();
-      CPX();
-      cpu.cycles += 3;
-      break;
-    case 0xEC:
-      absolute();
-      CPX();
-      cpu.cycles += 4;
-      break;
-      // CPY
-    case 0xC0:
-      immediate();
-      CPY();
-      cpu.cycles += 2;
-      break;
-    case 0xC4:
-      zero_page();
-      CPY();
-      cpu.cycles += 3;
-      break;
-    case 0xCC:
-      absolute();
-      CPY();
-      cpu.cycles += 4;
-      break;
-      // SEC
     case 0x38:
-      implied();
+      address_mode = IMPLIED;
       SEC();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
-      // SED
     case 0xF8:
-      implied();
+      address_mode = IMPLIED;
       SED();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
-      // SEI
     case 0x78:
-      implied();
+      address_mode = IMPLIED;
       SEI();
-      cpu.cycles += 2;
+      numberOfCycles += 2;
       break;
-      // PHA
-    case 0x48:
-      implied();
-      PHA();
-      cpu.cycles += 3;
+    case 0x85:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      opcode_value = read_mem_b(opcode_address);
+      STA();
+      numberOfCycles += 3;
       break;
-      // PHP
-    case 0x08:
-      implied();
-      PHP();
-      cpu.cycles += 3;
+    case 0x95:
+      address_mode = ZERO_PAGE_X;
+      zero_page_x();
+      opcode_value = read_mem_b(opcode_address);
+      STA();
+      numberOfCycles += 4;
       break;
-      // PLA
-    case 0x68:
-      implied();
-      PLA();
-      cpu.cycles += 4;
+    case 0x8D:
+      address_mode = ABSOLUTE;
+      absolute();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STA();
+      numberOfCycles += 4;
       break;
-      // PLP
-    case 0x28:
-      implied();
-      PLP();
-      cpu.cycles += 4;
+    case 0x9D:
+      address_mode = ABSOLUTE_X;
+      absolute_x();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STA();
+      numberOfCycles += 5;
       break;
-    case 0x00:
-      implied();
-      interrupt_irq();
-      cpu.cycles += 7;
-      return 1;
-      // nop
-    case 0xEA:
-    case 0x1A:
-    case 0x3A:
-    case 0x5A:
-    case 0x7A:
-    case 0xDA:
-    case 0xFA:
-      implied();
-      NOP();
-      cpu.cycles += 2;
+    case 0x99:
+      address_mode = ABSOLUTE_Y;
+      absolute_y();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STA();
+      numberOfCycles += 5;
+      break;
+    case 0x81:
+      address_mode = INDIRECT_X;
+      indirect_x();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STA();
+      numberOfCycles += 6;
+      break;
+    case 0x91:
+      address_mode = INDIRECT_Y;
+      indirect_y();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STA();
+      numberOfCycles += 6;
+      break;
+    case 0x86:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STX();
+      numberOfCycles += 3;
+      break;
+    case 0x96:
+      address_mode = ZERO_PAGE_Y;
+      zero_page_y();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STX();
+      numberOfCycles += 4;
+      break;
+    case 0x8E:
+      address_mode = ABSOLUTE;
+      absolute();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STX();
+      numberOfCycles += 4;
+      break;
+    case 0x84:
+      address_mode = ZERO_PAGE;
+      zero_page();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STY();
+      numberOfCycles += 3;
+      break;
+    case 0x94:
+      address_mode = ZERO_PAGE_X;
+      zero_page_x();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STY();
+      numberOfCycles += 4;
+      break;
+    case 0x8C:
+      address_mode = ABSOLUTE;
+      absolute();
+      if (opcode_address != PPU_R_DATA_ADDRESS)
+        opcode_value = read_mem_b(opcode_address);
+      else 
+        opcode_value = mem.buffer[opcode_address];
+      STY();
+      numberOfCycles += 4;
+      break;
+    case 0xAA:
+      address_mode = IMPLIED;
+      TAX();
+      numberOfCycles += 2;
+      break;
+    case 0xA8:
+      address_mode = IMPLIED;
+      TAY();
+      numberOfCycles += 2;
+      break;
+    case 0xBA:
+      address_mode = IMPLIED;
+      TSX();
+      numberOfCycles += 2;
+      break;
+    case 0x8A:
+      address_mode = IMPLIED;
+      TXA();
+      numberOfCycles += 2;
+      break;
+    case 0x9A:
+      address_mode = IMPLIED;
+      TXS();
+      numberOfCycles += 2;
+      break;
+    case 0x98:
+      address_mode = IMPLIED;
+      TYA();
+      numberOfCycles += 2;
       break;
     default:
-      //showRegisters(&cpu, &ppu);
-      cpu.pc += opcodes_size[opcode];
-      return -1;
+      printf("the opcode doesn't support\n");
+      cpu.cycles += numberOfCycles;
+      return -1; // return -1 when the opcode doesn't support(unofficial opcode)
   }
-  cpu.pc += opcodes_size[opcode];
-  return 1;
+  if (!isBranch) cpu.pc += opcodes_size[opcode];
+  cpu.cycles += numberOfCycles; // master clock
+  return numberOfCycles;
+}
+
+void interrupt_nmi()
+{
+  const u16 NMI_VECTOR = 0xFFFA;
+  // push high byte of program counter to stack
+  push((cpu.pc & 0xFF00) >> 8);
+  // push low byte of program counter to stack
+  push(cpu.pc & 0x00FF);
+  // push p flag to stack with break flag is clear
+  push(cpu.p | 0x20);
+  // read new program counter
+  cpu.pc = read_mem_w(NMI_VECTOR);
+  // turn on interrupt flag
+  cpu.p = cpu.p | INTERRUPT_FLAG;
+}
+
+void interrupt_reset()
+{
+  const u16 RESET_VECTOR = 0xFFFC;
+  // set new program counter
+  cpu.pc = read_mem_w(RESET_VECTOR);
+  // set flag
+  cpu.p = 0x24;
+  // reset stack pointer
+  cpu.stack = 0xFD;
+}
+
+void interrupt_irq()
+{
+  const u16 IRQ_VECTOR = 0xFFFE;
+  // push high byte of program counter to stack
+  push((cpu.pc & 0xFF00) >> 8);
+  // push low byte of program counter to stack
+  push(cpu.pc & 0x00FF);
+  // push p flag to stack with b Flag is clear
+  push(cpu.p | 0x20);
+  // read new program counter
+  cpu.pc = read_mem_w(IRQ_VECTOR);
+  // turn on interrupt flag
+  cpu.p = cpu.p | INTERRUPT_FLAG;
+}
+
+void setNZ(u8 value)
+{
+  setN(value);
+  setZ(value);
+}
+// the order of opcode implementation base on this website
+// http://www.obelisk.me.uk/6502/reference.html
+void ADC()
+{
+  u8 isCarry = (getCFlag() != 0) ? 1 : 0;
+  // use to check carry flag
+  u8 a = cpu.a;
+  cpu.a += opcode_value + isCarry;
+  setNZ(cpu.a);
+  // if the cpu.a 7th bit is off after adding, but before it is on, that means
+  // the carry flag is on
+  if (((u16)a + (u16)isCarry + (u16)opcode_value) >= 0x100)
+    SEC();
+  else
+    CLC();
+  // check the overflow flag, if 2 positive number are adding together but the
+  // result is negative number then the overflow flag is on
+
+  // check 2 number are same sign or not (before adding)
+  u8 isSameSign = (((a ^ opcode_value) & 0x80) != 0x80) ? 1 : 0;
+  // check 2 numbers are different sign (after adding)
+  u8 isDiffSign = (((cpu.a ^ a) & 0x80) == 0x80) ? 1 : 0;
+
+  if (isSameSign && isDiffSign)
+    cpu.p = cpu.p | OVERFLOW_FLAG;
+  else
+    cpu.p = cpu.p & ~(OVERFLOW_FLAG);
+}
+
+void AND()
+{
+  // a and with the value from memory
+  cpu.a &= opcode_value;
+  setNZ(cpu.a);
+}
+
+void ASL()
+{
+  if (address_mode == ACCUMULATOR) {
+    // set carry flag if the last bit is on, otherwise clear it
+    cpu.p = ((cpu.a & 0x80) == 0x80) ? (cpu.p | CARRY_FLAG)
+                                     : (cpu.p & ~(CARRY_FLAG));
+    // shift left 1 bit
+    cpu.a <<= 1;
+    setNZ(cpu.a);
+  }
+  //
+  else {
+    cpu.p = ((opcode_value & 0x80) == 0x80) ? (cpu.p | CARRY_FLAG)
+                                            : (cpu.p & ~(CARRY_FLAG));
+    // shift left 1 bit
+    opcode_value <<= 1;
+    write_mem_b(opcode_value, opcode_address);
+    setNZ(opcode_value);
+  }
+}
+
+u8 BCC()
+{
+  // if carry flag is clear than jump to the addres
+  if (getCFlag() == 0) {
+    cpu.pc = opcode_address;
+    // return 1 when branching is success for clock
+    return 1;
+  }
+  else
+    return 0;
+}
+u8 BCS()
+{
+  // if carry flag is clear than jump to the addres
+  if (getCFlag() != 0) {
+    cpu.pc = opcode_address;
+    // return 1 when branching is success for clock
+    return 1;
+  }
+  else
+    return 0;
+}
+u8 BEQ()
+{
+  // if zero flag is set
+  if (getZFlag() != 0) {
+    cpu.pc = opcode_address;
+    // return 1 when branching is success for clock
+    return 1;
+  }
+  else
+    return 0;
+}
+
+void BIT()
+{
+  u8 temp = cpu.a & opcode_value;
+  setZ(temp);
+  // set overflow flag if the value's bit 6 is on, otherwise clear it
+  cpu.p = (((opcode_value >> 6) & 0x01) == 0x01)
+              ? (cpu.p = cpu.p | OVERFLOW_FLAG)
+              : (cpu.p = cpu.p & ~(OVERFLOW_FLAG));
+  setN(opcode_value);
+}
+
+u8 BMI()
+{
+  if (getNFlag() != 0) {
+    cpu.pc = opcode_address;
+    // return 1 when branching is success for clock
+    return 1;
+  }
+  return 0;
+}
+u8 BNE()
+{
+  if (getZFlag() == 0) {
+    cpu.pc = opcode_address;
+    // return 1 when branching is success for clock
+    return 1;
+  }
+  return 0;
+}
+u8 BPL()
+{
+  if (getNFlag() == 0) {
+    cpu.pc = opcode_address;
+    // return 1 when branching is success for clock
+    return 1;
+  }
+  return 0;
+}
+
+void BRK()
+{
+  // push high byte
+  push((cpu.pc & 0xFF00) >> 8);
+  // push low byte
+  push(cpu.pc & 0x00FF);
+  // push flag https://wiki.nesdev.com/w/index.php/Status_flags
+  push(cpu.p | 0x30);
+  const u16 BRK_VECTOR = 0xFFFE;
+  cpu.pc = read_mem_w(BRK_VECTOR);
+  cpu.p = cpu.p | INTERRUPT_FLAG;
+}
+u8 BVC()
+{
+  if (getVFlag() == 0) {
+    cpu.pc = opcode_address;
+    return 1;
+  }
+  return 0;
+}
+u8 BVS()
+{
+  if (getVFlag() != 0) {
+    cpu.pc = opcode_address;
+    return 1;
+  }
+  return 0;
+}
+void CMP()
+{
+  // value a >= opcode_value then we set the carry bit on
+  if (cpu.a >= opcode_value)
+    SEC();
+  else
+    CLC();
+  setNZ(cpu.a - opcode_value);
+}
+void CPX()
+{
+  if (cpu.x >= opcode_value)
+    SEC();
+  else
+    CLC();
+  setNZ(cpu.x - opcode_value);
+}
+void CPY()
+{
+  if (cpu.y >= opcode_value)
+    SEC();
+  else
+    CLC();
+  setNZ(cpu.y - opcode_value);
+}
+void DEC()
+{
+  opcode_value--;
+  setNZ(opcode_value);
+  write_mem_b(opcode_value, opcode_address);
+}
+void DEX()
+{
+  cpu.x--;
+  setNZ(cpu.x);
+}
+
+void DEY()
+{
+  cpu.y--;
+  setNZ(cpu.y);
+}
+
+void EOR()
+{
+  // xor
+  cpu.a = cpu.a ^ opcode_value;
+  setNZ(cpu.a);
+}
+void INC()
+{
+  opcode_value++;
+  write_mem_b(opcode_value, opcode_address);
+  setNZ(opcode_value);
+}
+
+void INX()
+{
+  cpu.x++;
+  setNZ(cpu.x);
+}
+void INY()
+{
+  cpu.y++;
+  setNZ(cpu.y);
+}
+
+void JSR()
+{
+  // push high byte
+  // + 2 because jsr is 3 bytes - 1 byte (according to 6502 doc)
+  push((cpu.pc + 2) >> 8);
+  // push low byte
+  push((cpu.pc + 2) & 0x00FF);
+  cpu.pc = opcode_address;
+}
+
+void LDA()
+{
+  // load a from mem
+  cpu.a = opcode_value;
+  setNZ(cpu.a);
+}
+void LDX()
+{
+  // load x from mem
+  cpu.x = opcode_value;
+  setNZ(cpu.x);
+}
+
+void LDY()
+{
+  // load y from mem
+  cpu.y = opcode_value;
+  setNZ(cpu.y);
+}
+
+  // shift right
+void LSR()
+{
+  if (address_mode == ACCUMULATOR) {
+    // set to contents of old bit 0
+    if ((cpu.a & 0x01) == 0x01)
+      cpu.p = cpu.p | CARRY_FLAG;
+    else
+      cpu.p = cpu.p & ~(CARRY_FLAG);
+    cpu.a >>= 1;
+    setNZ(cpu.a);
+  }
+  else {
+    // set to contents of old bit 0
+    if ((opcode_value & 0x01) == 0x01)
+      cpu.p = cpu.p | CARRY_FLAG;
+    else
+      cpu.p = cpu.p & ~(CARRY_FLAG);
+    opcode_value >>= 1;
+    write_mem_b(opcode_value, opcode_address);
+    setNZ(opcode_value);
+  }
+}
+void ORA()
+{
+  // or bitwise operator
+  cpu.a = cpu.a | opcode_value;
+  setNZ(cpu.a);
+}
+void PLA()
+{
+  // pull value from stack and set to a
+  cpu.a = pull();
+  setNZ(cpu.a);
+}
+void ROL()
+{
+  if (address_mode == ACCUMULATOR) {
+    u8 a = cpu.a;
+    if ((a >> 7) == 0x01)
+      cpu.p = cpu.p | CARRY_FLAG;
+    else
+      cpu.p = cpu.p & ~(CARRY_FLAG);
+    cpu.a <<= 1;
+    // turn zero bit on if the old content of 7th is on
+    cpu.a = cpu.a | getCFlag();
+    setNZ(cpu.a);
+  }
+  else {
+    u8 m = opcode_value;
+    if ((m >> 7) == 0x01)
+      cpu.p = cpu.p | CARRY_FLAG;
+    else
+      cpu.p = cpu.p & ~(CARRY_FLAG);
+    opcode_value <<= 1;
+    // turn zero bit on if the old content of 7th is on
+    opcode_value = opcode_value | getCFlag();
+    setNZ(opcode_value);
+    write_mem_b(opcode_value, opcode_address);
+  }
+}
+void ROR()
+{
+  if (address_mode == ACCUMULATOR) {
+    // copy old value of a
+    u8 a = cpu.a;
+    // shift right
+    cpu.a >>= 1;
+    // turn 7th bit on if the carry bit is on
+    cpu.a = cpu.a | ((getCFlag() << 7) & 0x80);
+    // set negative and zero flag
+    // set carry flag if 0 bit is on, otherwise clear it
+    setNZ(cpu.a);
+    if ((a & 0x01) == 0x01)
+      cpu.p = cpu.p | CARRY_FLAG;
+    else
+      cpu.p = cpu.p & ~(CARRY_FLAG);
+  }
+  else {
+    // copy old value of m
+    u8 m = opcode_value;
+    // shift right
+    opcode_value >>= 1;
+    // turn 7th bit on if the carry  bit  is on
+    opcode_value = opcode_value | (getCFlag() << 7);
+    // set negative and zero flag
+    // set carry flag if 0 bit is on, otherwise clear it
+    setNZ(opcode_value);
+    if ((m & 0x01) == 0x01)
+      cpu.p = cpu.p | CARRY_FLAG;
+    else
+      cpu.p = cpu.p & ~(CARRY_FLAG);
+    write_mem_b(opcode_value, opcode_address);
+  }
+}
+
+void RTI()
+{
+  // pull flag register
+  PLP();
+  // fetch lowbyte
+  u8 lowByte = pull();
+  // fetch high byte
+  u8 highByte = pull();
+  // new program counter
+  cpu.pc = ((u16)(highByte) << 8) | (u16)lowByte;
+}
+void RTS()
+{
+  // fetch lowByte
+  u8 lowByte = pull();
+  // fetch high byte
+  u8 hightByte = pull();
+  // new program counter
+  cpu.pc = ((u16)(hightByte) << 8) | (u16)lowByte;
+  cpu.pc += 1;
+}
+void SBC()
+{
+  // substract form carry or (a-b = a + (-b))
+  opcode_value = ~opcode_value;
+  ADC();
+}
+void STA() { write_mem_b(cpu.a, opcode_address); }
+void STX() { write_mem_b(cpu.x, opcode_address); }
+void STY() { write_mem_b(cpu.y, opcode_address); }
+void TSX()
+{
+  cpu.x = cpu.stack;
+  setNZ(cpu.x);
+}
+void TXA()
+{
+  cpu.a = cpu.x;
+  setNZ(cpu.a);
 }

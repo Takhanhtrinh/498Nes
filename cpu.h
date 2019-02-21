@@ -1,3 +1,8 @@
+/*
+ * cpu.h
+ * header file for cpu emulator
+ * by: Trinh Ta
+ */
 #ifndef CPU_H
 #define CPU_H
 #include <assert.h>
@@ -8,6 +13,16 @@
 #include "helper.h"
 #include "mem.h"
 #include "ppu.h"
+#define STACK_OFFSET 0x0100
+
+#define CARRY_FLAG 0x01
+#define ZERO_FLAG 0x02
+#define INTERRUPT_FLAG 0x04
+#define DECIMAL_FLAG 0x08
+#define BREAK_FLAG 0x10
+#define OVERFLOW_FLAG 0x40
+#define NEGATIVE_FLAG 0x80
+
 #define IMPLIED 0x01
 #define ACCUMULATOR 0x02
 #define IMMEDIATE 0x03
@@ -19,11 +34,368 @@
 #define ABSOLUTE_X 0x09
 #define ABSOLUTE_Y 0x0A
 #define INDIRECT 0x0B
+#define INDIRECT_X 0x0C
+#define INDIRECT_Y 0X0D
+typedef struct {
+  u8 nmi_interrupt;
+  // program counter
+  u16 pc;
+  // stack pointer;
+  u8 stack;
+  // accumulator
+  u8 a;
+  // index register x
+  u8 x;
+  // index register y
+  u8 y;
+  // flag [n v - b d i z c]
+  u8 p;
+  // cycle
+  u64 cycles;
 
-#define IN_INDIRECT 0x0C
-#define IN_INDEXED 0X0D
-#define STACK_OFFSET 0x0100
+} CPU;
+extern CPU cpu;
+extern CPU cpu1;
+extern u8 address_mode;
+extern u8 opcode_value;
+extern u16 opcode_address;
 
+/*
+ * emulate()
+ * This function will get current program counter and decode the instruction.
+ * return
+ *        number of cycles for the instruction decoded.
+ *        return -1 if the instruction is not supported
+ */
+int emulate();
+
+/*
+ * getNFlag()
+ * this function will get the Negative flag from flag register p
+ * return
+ *        1: is on
+ *        0: is off
+ */
+static inline u8 getNFlag() { return cpu.p >> 7; }
+/*
+ * getVFlag()
+ * this function will get the Overflow Flag from Flag register p
+ * return
+ *        1: is on
+ *        0: is off
+ */
+static inline u8 getVFlag() { return (cpu.p >> 6) & 0x01; }
+/*
+ * getIFlag()
+ * this function will get the Interrupt Flag from Flag register p
+ * return
+ *        1: is on
+ *        0: is off
+ */
+static inline u8 getIFlag() { return (cpu.p >> 3) & 0x01; }
+/*
+ * getZFlag()
+ * this function will get the Zero Flag from Flag register p
+ * return
+ *        1: is on
+ *        0: is off
+ */
+static inline u8 getZFlag() { return (cpu.p >> 1) & 0x01; }
+/*
+ * getCFlag()
+ * this function will get the Carry Flag from Flag register p
+ * return
+ *        1: is on
+ *        0: is off
+ */
+static inline u8 getCFlag() { return cpu.p & 0x01; }
+
+// addressing mode
+/*
+ * immediate()
+ * get immediate value from instruction. the value will be stored in
+ * opcode_value as a global variable return none
+ */
+static inline void immediate() { opcode_address = cpu.pc + 1; }
+/*
+ * zero_page()
+ * get address for zero page. the address will be stored in opcode_address as
+ * global variable
+ * return
+ *        none
+ */
+void zero_page();
+
+/*
+ * zero_page_x()
+ * get address for zero page x. the address will be stored in opcode_address as
+ * a global variable
+ * return
+ *        none
+ */
+void zero_page_x();
+
+/*
+ * zero_page_y()
+ * get address for zero page y. the address will be stored in opcode_address as
+ * a global variable
+ * return
+ *        none
+ */
+void zero_page_y();
+
+/*
+ * absolute()
+ * get address for absolute. the address will be stored in opcode_address as
+ * a global variable
+ * return
+ *        none
+ */
+void absolute();
+
+/*
+ * absolute_x()
+ * get address for absolute. the address will be stored in opcode_address as
+ * a global variable
+ * return
+ *        0 for no page across
+ *        1 for page across
+ */
+u8 absolute_x();
+
+/*
+ * absolute_y()
+ * get address for absolute. the address will be stored in opcode_address as
+ * a global variable
+ * return
+ *        0 for no page across
+ *        1 for page across
+ */
+u8 absolute_y();
+
+/*
+ * indirect()
+ *
+ * return
+ *        none
+ */
+void indirect();
+
+/*
+ * indirect_x()
+ *
+ * return
+ *        none
+ */
+void indirect_x();
+
+/*
+ * indirect_y()
+ *
+ * return
+ *        1 if page is a crossed, otherwise return 0
+ */
+u8 indirect_y();
+
+/*
+ * relative()
+ * for branch
+ * return
+ *        none
+ */
+void relative();
+
+/* isPageAcross
+ * check if 2 addresses are in different page
+ * parameters:
+ *            address1: first address to be compared
+ *            address2: second address to be compared
+ * return:
+ *        0: for 2 addresses are in same page
+ *        1: for 2 addresses are in different page
+ */
+static inline u8 isPageAcross(u16 address1, u16 address2)
+{
+  return (address1 & 0xFF00) != (address2 & 0xFF00);
+}
+/*
+ * push(u8 val)
+ * stack operation, push value to stack
+ * parameters:
+ *            val: value to push to stack
+ * return:
+ *          none
+ */
+void push(u8 val);
+
+/*
+ * pull()
+ * pull the value from stack
+ * return
+ *        value from stack
+ */
+u8 pull();
+
+/*
+ * interrupt_nmi()
+ * trigger nmi interrupt
+ * load nmi vector to program counter
+ */
+void interrupt_nmi();
+
+/*
+ * interrupt_reset()
+ * trigger reset interrupt
+ * load reset vector to program counter and set cpu.p
+ */
+void interrupt_reset();
+
+/*
+ * interrupt_irq()
+ * irq interrupt
+ */
+void interrupt_irq();
+
+// set the zero flag if the value is zero, otherwise turn it off
+static inline void setZ(u8 value)
+{
+  cpu.p = (value == 0) ? (cpu.p | ZERO_FLAG) : (cpu.p & ~(ZERO_FLAG));
+}
+
+// set the negative if the value is negative, otherwise turn it off
+static inline void setN(u8 value)
+{
+  cpu.p = ((value >> 7) == 0x01) ? (cpu.p | NEGATIVE_FLAG) : (cpu.p & ~(NEGATIVE_FLAG));
+}
+
+// check if the value meet the condition to turn on the N and Z Flag, otherwise
+// the N or Z Flag is off
+void setNZ(u8 value);
+
+// add with carry
+void ADC();
+
+void AND();
+
+void ASL();
+
+// branch if carry clear
+// return 1 if branch is occured, otherwise return 0
+u8 BCC();
+// branch if carry is set
+// return 1 if branch is occured, otherwise return 0
+u8 BCS();
+
+// branch if zero is set
+u8 BEQ();
+
+// BIT test
+void BIT();
+
+// branch if minus
+u8 BMI();
+
+// branch if not equal
+u8 BNE();
+
+// branch if positive
+u8 BPL();
+
+// force interrupt
+void BRK();
+
+// branch if overflow clear
+u8 BVC();
+// branch if overflow set
+u8 BVS();
+
+// clear carry flag
+static inline void CLC() { cpu.p = cpu.p & ~(CARRY_FLAG); }
+// clear decimal
+static inline void CLD() { cpu.p = cpu.p & ~(DECIMAL_FLAG); }
+// clear interrupt flag
+static inline void CLI() { cpu.p = cpu.p & ~(INTERRUPT_FLAG); }
+// clear overflow
+static inline void CLV() { cpu.p = cpu.p & ~(OVERFLOW_FLAG); }
+// comapre with a
+void CMP();
+// comapre with x
+void CPX();
+// comapre with y
+void CPY();
+// decrement memory
+void DEC();
+// decrement x register
+void DEX();
+// decrement y register
+void DEY();
+// exclusive OR
+void EOR();
+// increment memory
+void INC();
+// increment X
+void INX();
+// increment y
+void INY();
+// jump
+static inline void JMP() { cpu.pc = opcode_address; }
+// jump with return
+void JSR();
+// load accumulator
+void LDA();
+// load x register
+void LDX();
+// load y register
+void LDY();
+// logical shift right
+void LSR();
+// logical inclusive OR
+void ORA();
+// push accumulator
+static inline void PHA() { push(cpu.a); }
+// push flag
+static inline void PHP() { push(cpu.p | 0x30); }
+// pull accumulator
+void PLA();
+// pull flag
+// https://wiki.nesdev.com/w/index.php/Status_flags
+// plp ignore bit 4 and 5. nestes.nes bit 5 is always on
+static inline void PLP() { cpu.p = (pull() & 0xEF) | (cpu.p & 0x10) | 0x20; }
+// rotate left
+void ROL();
+// rotate right
+void ROR();
+// return from interrupt
+void RTI();
+// return from subroutine
+void RTS();
+// subtract with carry
+void SBC();
+// set carry flag
+static inline void SEC() { cpu.p = cpu.p | CARRY_FLAG; }
+// set decimal
+static inline void SED() { cpu.p = cpu.p | DECIMAL_FLAG; }
+// set interrupt flag
+static inline void SEI() { cpu.p = cpu.p | INTERRUPT_FLAG; }
+// store Accumulator
+void STA();
+// store x
+void STX();
+// store y
+void STY();
+// transfer accumulator to x
+static inline void TAX() { cpu.x = cpu.a; }
+// transfer accumulator to y
+static inline void TAY() { cpu.y = cpu.a; }
+// transfer stack pointer to x
+void TSX();
+// transfer x to accumulator
+void TXA();
+// transfer x to stack
+static inline void TXS() { cpu.stack = cpu.x; }
+// transfer y to accumulator
+static inline void TYA() { cpu.a = cpu.y; }
+// Opcodes for disassembler
 static const char *opcode_name[] = {"BRK",
                                     "ORA ($%02x,x)",
                                     "STP",
@@ -292,142 +664,4 @@ static u8 opcodes_size[] = {
     2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3, 2, 2, 1, 2, 2, 2, 2, 2,
     1, 3, 1, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
     2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3};
-typedef struct {
-  u8 nmi_interrupt;
-  // program counter
-  u16 pc;
-  // stack pointer;
-  u8 stack;
-  // accumulator
-  u8 a;
-  // index register x
-  u8 x;
-  // index register y
-  u8 y;
-  // flag [n v - b d i z c]
-  u8 p;
-  // cycle 
-  u64 cycles;
-  
-} CPU;
-extern CPU cpu;
-extern CPU cpu1;
-extern u8 address_mode;
-extern u8 opcode_value;
-extern u16 opcode_address;
-extern u64 lastCycles;
-// address
-void immediate();
-void zero_page();
-void zero_page_x();
-void zero_page_y();
-void relative();
-void absolute();
-u8 absolute_x();
-u8 absolute_y();
-void indirect();
-void index_indirect();
-u8 indirect_indexed();
-void implied();
-
-byte emulate();
-
-CPU create_cpu();
-void setFlag(u8 value);
-u8 getNflag();
-u8 getVflag();
-u8 getZflag();
-u8 getCflag();
-u8 getIflag();
-u8 getDflag();
-u8 getBflag();
-
-static inline u8 getPageAcross(u16 address) {
-  return ((address & 0x00FF) == 0x00FF) ? 1 : 0;
-}
-
-void setNFlag(u8 value);
-void setVFlag(u8 value1, u8 value2, u8 result);
-void setZFlag(u8 value);
-// interrupts
-// reset
-void interrupt_reset();
-// NMI
-void interrupt_nmi();
-// brk/irq
-void interrupt_irq();
-// registers
-void NOP();  // done
-
-// storage
-void LDA();  // done
-void LDX();  // done
-void LDY();  // done
-void STA();  // done
-void STX();  // done
-void STY();  // done
-void TAX();  // done
-void TAY();  // done
-void TSX();  // done
-void TXA();  // done
-void TXS();  // done
-void TYA();  // done
-// bitwise
-void AND();  // done
-void ASL();  // done
-void BIT();
-void EOR();  // done
-void LSR();  // done
-void ORA();  // done
-void ROL();  // done
-void ROR();  // done
-// math
-void ADC();  // done
-void DEC();  // done
-void DEX();  // done
-void DEY();  // done
-void INC();  // done
-void INX();  // done
-void INY();  // done
-void SBC();  // done
-// registers
-void CLC();  // done
-void CLD();  // done
-void CLI();  // done
-void CLV();  // done
-void SEC();  // done
-void SED();  // done
-void SEI();  // done
-void CMP();  // done
-void CPX();  // done
-void CPY();  // done
-// stack
-void PHA();  // done
-void PHP();  // done
-void PLA();  // done
-void PLP();  // done
-
-// Jump
-void JMP();  // done
-void JSR();  // done
-void RTI();  // done
-void RTS();  // done
-// Branch
-//
-// BCC - Branch on Carry Clear
-// BCS - Branch on Carry Set
-// BEQ - Branch on Result Zero
-// BMI - Branch on Result Minus
-// BNE - Branch on Result not Zero
-// BPL - Branch on Result Plus
-// BVC - Branch on Overflow Clear
-// BVS - Branch on Overflow Set
-byte BCC();
-byte BCS();
-byte BEQ();
-byte BMI();
-byte BNE();
-byte BPL();
-byte BVC();
-byte BVS();
 #endif
