@@ -21,9 +21,10 @@
 ## Prerequisites 
 <p>
 To build this project, it is required to have Make and GCC compiler in your
-system.</p>
-## To build testCPU 
+system.
+</p>
+##Build testCPU 
   <p>make testCPU </p>
-## to run testCPU 
+##Run testCPU 
   <p>./testCPU </p>
 
