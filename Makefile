@@ -12,7 +12,7 @@ READ_ROOM = testReadRoom.c
 TEST_CPU = testCPU.c
 
 cpu.o: $(CPU)
-	$(CC) -c $(FLAG) $(CPU) -o cpu.o -DDEBUG
+	$(CC) -c $(FLAG) $(CPU) -o cpu.o
 mem.o: $(MEM) 
 	$(CC) -c $(FLAG) $(MEM) -o mem.o
 rom.o: $(ROM) 
@@ -28,6 +28,9 @@ testDisassembler: $(DIS) cpu.o mem.o rom.o ppu.o helper.o
 testReadRoom: $(READ_ROOM) cpu.o mem.o rom.o ppu.o
 	$(CC) $(FLAG) $(READ_ROOM) -o testReadRoom cpu.o mem.o rom.o ppu.o
 testCPU: $(TEST_CPU) helper.o mem.o cpu.o rom.o ppu.o controller.o
-	$(CC) $(FLAG) $(TEST_CPU) -o testCPU helper.o mem.o cpu.o rom.o ppu.o controller.o
+	$(CC) $(FLAG) $(TEST_CPU) -o testCpu helper.o mem.o cpu.o rom.o ppu.o controller.o
+main: main.c helper.o mem.o cpu.o rom.o ppu.o controller.o
+	$(CC) $(FLAG) main.c -o main -lSDL2 helper.o mem.o cpu.o rom.o ppu.o controller.o
+
 clean: 
-	rm *.o testCpu testCpu
+	rm *.o main

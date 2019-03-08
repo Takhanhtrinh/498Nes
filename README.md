@@ -23,8 +23,8 @@
 To build this project, it is required to have Make and GCC compiler in your
 system.
 </p>
-##Build testCPU 
+## Build testCPU 
   <p>make testCPU </p>
-##Run testCPU 
+## Run testCPU 
   <p>./testCPU </p>
 
